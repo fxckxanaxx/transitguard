@@ -427,21 +427,44 @@ async function iniciarApp(){
       return;
     }
   }
-  // Cambiar pantalla primero, luego pedir GPS con delay
-  // (el prompt de geolocalización debe dispararse desde contexto visible)
+  // GPS: pedir getCurrentPosition AQUÍ, dentro del gesto del usuario.
+  // Safari iOS solo muestra el prompt si la llamada viene de un gesto directo.
+  // Llamamos primero (antes de cambiar pantalla) para que el sistema asocie
+  // la petición con el tap del botón. Luego cambiamos de pantalla.
+  var gpsPromise = new Promise(function(resolve){
+    if(!('geolocation' in navigator)){resolve('unavailable');return;}
+    navigator.geolocation.getCurrentPosition(
+      function(pos){resolve(pos);},
+      function(err){resolve('error:'+err.code);},
+      {enableHighAccuracy:true, timeout:10000, maximumAge:0}
+    );
+  });
+
   showScreen('main-screen');
   startMonitoring();
   requestWakeLock();
-  setTimeout(startGPS, 500);
-}
 
-function startGPS(){
-  if(!('geolocation' in navigator)){
-    updateGPSUI('nolock','GPS no disponible','Tu dispositivo no soporta geolocalización');
-    setBadge('nolock','Sin GPS');return;
-  }
+  // Una vez resuelto el primer fix de posición, arrancar watchPosition
   updateGPSUI('wait','Buscando señal GPS…','Acepta el permiso de ubicación si el sistema lo pide');
   setBadge('wait','GPS…');
+  gpsPromise.then(function(result){
+    if(typeof result === 'string'){
+      // error o no disponible
+      setBadge('nolock','Sin GPS');
+      var msg = result === 'unavailable' ? 'Tu dispositivo no soporta geolocalización'
+              : result === 'error:1'     ? 'Permiso denegado — los frenazos se guardarán sin coordenadas'
+              : result === 'error:2'     ? 'Señal GPS no disponible'
+              :                           'Tiempo de espera agotado';
+      updateGPSUI('nolock','GPS no disponible', msg);
+      return;
+    }
+    // Primer fix recibido — actualizar posición y arrancar watcher
+    currentPos = {lat:result.coords.latitude, lon:result.coords.longitude, accuracy:Math.round(result.coords.accuracy)};
+    startGPSWatcher();
+  });
+}
+
+function startGPSWatcher(){
   navigator.geolocation.watchPosition(
     function(pos){
       currentPos={lat:pos.coords.latitude,lon:pos.coords.longitude,accuracy:Math.round(pos.coords.accuracy)};
